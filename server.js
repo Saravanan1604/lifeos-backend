@@ -107,7 +107,25 @@ app.post('/api/login', (req, res) => {
     });
 });
 
-// 4. Sync Route (Save Data to Cloud)
+// 4. Reset Password Route (Requires exact Name and Email match for security)
+app.post('/api/reset-password', (req, res) => {
+    const { name, email, newPassword } = req.body;
+    if (!name || !email || !newPassword) return res.status(400).json({ error: "Name, email and new password required" });
+    
+    db.get(`SELECT * FROM users WHERE email = ? COLLATE NOCASE AND name = ? COLLATE NOCASE`, [email, name], async (err, user) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!user) return res.status(400).json({ error: "Account with that Name and Email not found." });
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        
+        db.run(`UPDATE users SET password = ? WHERE id = ?`, [hashedPassword, user.id], function(err) {
+            if (err) return res.status(500).json({ error: "Failed to reset: " + err.message });
+            res.json({ message: "Password reset successful! You can now login." });
+        });
+    });
+});
+
+// 5. Sync Route (Save Data to Cloud)
 app.post('/api/sync', verifyToken, (req, res) => {
     const { state } = req.body;
     if (!state) return res.status(400).json({ error: "No state data provided" });
