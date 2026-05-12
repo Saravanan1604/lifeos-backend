@@ -21,16 +21,20 @@ const db = new sqlite3.Database(dbPath, (err) => {
     } else {
         console.log('Connected to SQLite database.');
         
-        // Create Users Table (We store the entire frontend STATE object as a JSON string)
+        // Create Users Table
         db.run(`
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT,
                 email TEXT UNIQUE,
+                mobile TEXT,
                 password TEXT,
                 state_data TEXT
             )
-        `);
+        `, () => {
+            // Attempt to add mobile column if upgrading from old schema
+            db.run(`ALTER TABLE users ADD COLUMN mobile TEXT`, (err) => { /* ignore if exists */ });
+        });
     }
 });
 
@@ -49,20 +53,20 @@ const verifyToken = (req, res, next) => {
 
 // 2. Register Route
 app.post('/api/register', async (req, res) => {
-    const { name, email, password } = req.body;
-    if (!email || !password || !name) return res.status(400).json({ error: "Name, email and password required" });
+    const { name, email, mobile, password } = req.body;
+    if (!email || !password || !name || !mobile) return res.status(400).json({ error: "Name, email, mobile and password required" });
 
     try {
         const hashedPassword = await bcrypt.hash(password, 10);
         
         // Initial state for new user
         const initialState = JSON.stringify({
-            user: { name, email, joinDate: new Date().toISOString() },
+            user: { name, email, mobile, joinDate: new Date().toISOString() },
             settings: { theme: 'dark', currency: '₹', name }
         });
         
-        db.run(`INSERT INTO users (name, email, password, state_data) VALUES (?, ?, ?, ?)`, 
-            [name, email, hashedPassword, initialState], 
+        db.run(`INSERT INTO users (name, email, mobile, password, state_data) VALUES (?, ?, ?, ?, ?)`, 
+            [name, email, mobile, hashedPassword, initialState], 
             function(err) {
                 if (err) {
                     if (err.message.includes('UNIQUE constraint failed')) {
@@ -107,14 +111,14 @@ app.post('/api/login', (req, res) => {
     });
 });
 
-// 4. Reset Password Route (Requires exact Name and Email match for security)
+// 4. Reset Password Route (Requires Mobile Number and Email match)
 app.post('/api/reset-password', (req, res) => {
-    const { name, email, newPassword } = req.body;
-    if (!name || !email || !newPassword) return res.status(400).json({ error: "Name, email and new password required" });
+    const { mobile, email, newPassword } = req.body;
+    if (!mobile || !email || !newPassword) return res.status(400).json({ error: "Mobile, email and new password required" });
     
-    db.get(`SELECT * FROM users WHERE email = ? COLLATE NOCASE AND name = ? COLLATE NOCASE`, [email, name], async (err, user) => {
+    db.get(`SELECT * FROM users WHERE email = ? COLLATE NOCASE AND mobile = ?`, [email, mobile], async (err, user) => {
         if (err) return res.status(500).json({ error: err.message });
-        if (!user) return res.status(400).json({ error: "Account with that Name and Email not found." });
+        if (!user) return res.status(400).json({ error: "Account with that Email and Mobile not found." });
 
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         
