@@ -10,9 +10,12 @@ app.use(cors());
 app.use(express.json({ limit: '20mb' })); // state blobs can be large
 
 // ── MongoDB connection ──────────────────────────────────────────────────────
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`LifeOS backend running on port ${PORT}`));
+
 mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => { console.error('MongoDB connection failed:', err); process.exit(1); });
+  .then(() => console.log('MongoDB connected ✅'))
+  .catch(err => console.error('MongoDB connection failed ❌', err.message));
 
 // ── User schema: stores the entire frontend STATE blob per user ─────────────
 const userSchema = new mongoose.Schema({
@@ -146,6 +149,3 @@ app.post('/api/reset-password', async (req, res) => {
   }
 });
 
-// ── Start ───────────────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`LifeOS backend running on port ${PORT}`));
