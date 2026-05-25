@@ -4,6 +4,7 @@ const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
+const { OAuth2Client } = require('google-auth-library');
 
 const app = express();
 app.use(cors());
@@ -12,6 +13,8 @@ app.use(express.json({ limit: '10mb' }));
 
 const PORT = process.env.PORT || 5000;
 const SECRET_KEY = process.env.JWT_SECRET || 'lifeos_super_secret_key_123';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '33547416778-vg3i2e2shoaiptoouhpo2ns0iojecok9.apps.googleusercontent.com';
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 // 1. Initialize SQLite Database
 const dbPath = path.resolve(__dirname, 'database.sqlite');
@@ -111,7 +114,59 @@ app.post('/api/login', (req, res) => {
     });
 });
 
-// 4. Reset Password Route (Requires Mobile Number and Email match)
+// 4. Google Sign-In Route
+app.post('/api/google-auth', async (req, res) => {
+    const { credential } = req.body;
+    if (!credential) return res.status(400).json({ error: 'No Google credential provided' });
+
+    try {
+        const ticket = await googleClient.verifyIdToken({
+            idToken: credential,
+            audience: GOOGLE_CLIENT_ID
+        });
+        const { name, email, picture } = ticket.getPayload();
+
+        db.get(`SELECT * FROM users WHERE email = ?`, [email], (err, user) => {
+            if (err) return res.status(500).json({ error: err.message });
+
+            if (user) {
+                // Existing user — log them in
+                const token = jwt.sign({ id: user.id, email: user.email }, SECRET_KEY);
+                const stateData = user.state_data ? JSON.parse(user.state_data) : {};
+                // Attach profile picture from Google (not stored in DB, comes from token)
+                const userObj = stateData.user
+                    ? { ...stateData.user, picture }
+                    : { name: user.name, email: user.email, picture };
+                return res.json({ message: 'Login successful', token, user: userObj, state: stateData });
+            }
+
+            // New user — create account (Google users have no password)
+            const initialState = JSON.stringify({
+                user: { name, email, picture, joinDate: new Date().toISOString(), authProvider: 'google' },
+                settings: { theme: 'dark', currency: '₹', name }
+            });
+
+            db.run(
+                `INSERT INTO users (name, email, mobile, password, state_data) VALUES (?, ?, ?, ?, ?)`,
+                [name, email, '', '', initialState],
+                function(err) {
+                    if (err) return res.status(500).json({ error: 'Failed to create account: ' + err.message });
+                    const token = jwt.sign({ id: this.lastID, email }, SECRET_KEY);
+                    res.json({
+                        message: 'Account created',
+                        token,
+                        user: { name, email, picture, joinDate: new Date().toISOString() },
+                        state: JSON.parse(initialState)
+                    });
+                }
+            );
+        });
+    } catch (err) {
+        res.status(401).json({ error: 'Invalid Google token: ' + err.message });
+    }
+});
+
+// 5. Reset Password Route (Requires Mobile Number and Email match)
 app.post('/api/reset-password', (req, res) => {
     const { mobile, email, newPassword } = req.body;
     if (!mobile || !email || !newPassword) return res.status(400).json({ error: "Mobile, email and new password required" });
