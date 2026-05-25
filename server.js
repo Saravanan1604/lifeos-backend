@@ -22,7 +22,9 @@ const userSchema = new mongoose.Schema({
   name:      { type: String, required: true },
   email:     { type: String, required: true, unique: true, lowercase: true },
   mobile:    { type: String, default: '' },
-  password:  { type: String, required: true },
+  password:  { type: String, default: '' },
+  authProvider: { type: String, default: 'email' }, // 'email' | 'google'
+  picture:   { type: String, default: '' },
   state:     { type: mongoose.Schema.Types.Mixed, default: {} },
   createdAt: { type: Date, default: Date.now }
 });
@@ -128,6 +130,42 @@ app.post('/api/sync', auth, async (req, res) => {
   }
 });
 
+// Google Sign-In (find-or-create by email)
+app.post('/api/google-auth', async (req, res) => {
+  try {
+    const { credential } = req.body;
+    if (!credential) return res.status(400).json({ error: 'No Google credential provided' });
+
+    // Verify the ID token via Google's tokeninfo endpoint (no extra deps needed)
+    const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '33547416778-vg3i2e2shoaiptoouhpo2ns0iojecok9.apps.googleusercontent.com';
+    const gRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`);
+    const payload = await gRes.json();
+    if (!gRes.ok || payload.aud !== GOOGLE_CLIENT_ID) {
+      return res.status(401).json({ error: 'Invalid Google token' });
+    }
+
+    const { name, email, picture } = payload;
+    let user = await User.findOne({ email: email.toLowerCase() });
+
+    if (user) {
+      // Update picture if changed, ensure authProvider recorded
+      if (picture && user.picture !== picture) { user.picture = picture; await user.save(); }
+      const token = makeToken(user._id);
+      const userObj = { name: user.name, email: user.email, picture: user.picture, mobile: user.mobile, joinDate: user.createdAt, authProvider: user.authProvider };
+      return res.json({ token, user: userObj, state: user.state || {} });
+    }
+
+    // New Google user — create without password
+    user = await User.create({ name, email, mobile: '', password: '', authProvider: 'google', picture });
+    const token = makeToken(user._id);
+    const userObj = { name: user.name, email: user.email, picture, joinDate: user.createdAt, authProvider: 'google' };
+    res.json({ token, user: userObj, state: {} });
+  } catch (e) {
+    console.error('Google auth error:', e);
+    res.status(500).json({ error: 'Google sign-in failed: ' + e.message });
+  }
+});
+
 // Reset password (verified by mobile + email)
 app.post('/api/reset-password', async (req, res) => {
   try {
@@ -146,6 +184,31 @@ app.post('/api/reset-password', async (req, res) => {
     res.json({ message: 'Password reset successfully! You can now log in with your new password.' });
   } catch (e) {
     res.status(500).json({ error: 'Server error during password reset' });
+  }
+});
+
+// Admin — user stats (protected by ADMIN_KEY env variable)
+app.get('/api/admin/users', async (req, res) => {
+  const ADMIN_KEY = process.env.ADMIN_KEY || 'lifeos-admin-2024';
+  if (req.query.key !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+
+  try {
+    const users = await User.find({}, 'name email mobile authProvider createdAt').sort({ createdAt: -1 });
+    res.json({
+      total: users.length,
+      email_users: users.filter(u => u.authProvider !== 'google').length,
+      google_users: users.filter(u => u.authProvider === 'google').length,
+      users: users.map(u => ({
+        id: u._id,
+        name: u.name,
+        email: u.email,
+        mobile: u.mobile,
+        auth_provider: u.authProvider || 'email',
+        joined: u.createdAt
+      }))
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
