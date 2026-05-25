@@ -4,7 +4,7 @@ const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const { OAuth2Client } = require('google-auth-library');
+
 
 const app = express();
 app.use(cors());
@@ -14,7 +14,6 @@ app.use(express.json({ limit: '10mb' }));
 const PORT = process.env.PORT || 5000;
 const SECRET_KEY = process.env.JWT_SECRET || 'lifeos_super_secret_key_123';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '33547416778-vg3i2e2shoaiptoouhpo2ns0iojecok9.apps.googleusercontent.com';
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 // 1. Initialize SQLite Database
 const dbPath = path.resolve(__dirname, 'database.sqlite');
@@ -120,11 +119,13 @@ app.post('/api/google-auth', async (req, res) => {
     if (!credential) return res.status(400).json({ error: 'No Google credential provided' });
 
     try {
-        const ticket = await googleClient.verifyIdToken({
-            idToken: credential,
-            audience: GOOGLE_CLIENT_ID
-        });
-        const { name, email, picture } = ticket.getPayload();
+        // Verify token via Google's public tokeninfo endpoint (no extra dependencies)
+        const gRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`);
+        const payload = await gRes.json();
+        if (!gRes.ok || payload.aud !== GOOGLE_CLIENT_ID) {
+            return res.status(401).json({ error: 'Invalid Google token' });
+        }
+        const { name, email, picture } = payload;
 
         db.get(`SELECT * FROM users WHERE email = ?`, [email], (err, user) => {
             if (err) return res.status(500).json({ error: err.message });
