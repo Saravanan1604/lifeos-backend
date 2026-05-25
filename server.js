@@ -198,6 +198,25 @@ app.post('/api/sync', verifyToken, (req, res) => {
     });
 });
 
+// Admin — user stats (protected by ADMIN_KEY env variable)
+const ADMIN_KEY = process.env.ADMIN_KEY || 'lifeos-admin-2024';
+
+app.get('/api/admin/users', (req, res) => {
+    if (req.query.key !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+
+    db.all(`SELECT id, name, email, mobile,
+            CASE WHEN password = '' THEN 'google' ELSE 'email' END AS auth_provider
+            FROM users ORDER BY id DESC`, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({
+            total: rows.length,
+            email_users: rows.filter(r => r.auth_provider === 'email').length,
+            google_users: rows.filter(r => r.auth_provider === 'google').length,
+            users: rows
+        });
+    });
+});
+
 app.listen(PORT, () => {
     console.log(`LifeOS Backend running on http://localhost:${PORT}`);
 });
